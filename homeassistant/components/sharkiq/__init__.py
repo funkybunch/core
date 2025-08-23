@@ -10,22 +10,28 @@ from sharkiq import (
     SharkIqNotAuthedError,
     get_ayla_api,
 )
+import voluptuous as vol
 
 from homeassistant import exceptions
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_REGION, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     API_TIMEOUT,
+    ATTR_ROOMS,
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    SERVICE_CLEAN_ROOM,
     SHARKIQ_REGION_DEFAULT,
     SHARKIQ_REGION_EUROPE,
 )
-from .coordinator import SharkIqUpdateCoordinator
+from .coordinator import SharkConfigEntry, SharkIqUpdateCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 class CannotConnect(exceptions.HomeAssistantError):
@@ -49,8 +55,27 @@ async def async_connect_or_timeout(ayla_api: AylaApi) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_setup(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Configure services via setup."""
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_CLEAN_ROOM,
+        {
+            vol.Required(ATTR_ROOMS): vol.All(
+                cv.ensure_list, vol.Length(min=1), [cv.string]
+            ),
+        },
+        "async_clean_room",
+    )
+
+    return True
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, config_entry: SharkConfigEntry
+) -> bool:
     """Initialize the sharkiq platform via config entry."""
+
     if CONF_REGION not in config_entry.data:
         hass.config_entries.async_update_entry(
             config_entry,
@@ -74,6 +99,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     device_names = ", ".join(d.name for d in shark_vacs)
     LOGGER.debug("Found %d Shark IQ device(s): %s", len(shark_vacs), device_names)
     coordinator = SharkIqUpdateCoordinator(hass, config_entry, ayla_api, shark_vacs)
+
+    config_entry.runtime_data = coordinator
 
     await coordinator.async_config_entry_first_refresh()
 
